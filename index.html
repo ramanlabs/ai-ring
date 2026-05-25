@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Ring MVP</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f0f;
+      color: #f0f0f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 0.4rem; text-align: center; }
+    .subtitle { font-size: 0.9rem; color: #888; margin-bottom: 3rem; text-align: center; }
+
+    .record-btn {
+      width: 160px; height: 160px; border-radius: 50%;
+      border: 3px solid #333; background: #1a1a1a;
+      color: #f0f0f0; font-size: 1rem; font-weight: 600;
+      cursor: pointer; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 0.5rem;
+      transition: all 0.2s ease; -webkit-tap-highlight-color: transparent;
+    }
+    .record-btn:active { transform: scale(0.96); }
+    .record-btn.recording {
+      border-color: #e74c3c; background: #1a0a0a;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(231,76,60,0.4); }
+      50%       { box-shadow: 0 0 0 16px rgba(231,76,60,0); }
+    }
+    .btn-icon { font-size: 2rem; }
+
+    .status { margin-top: 2rem; font-size: 0.95rem; color: #888; text-align: center; min-height: 1.5rem; }
+    .status.active { color: #e74c3c; }
+    .status.saved  { color: #2ecc71; }
+
+    .timer { font-size: 2rem; font-weight: 300; color: #e74c3c; margin-top: 1rem; display: none; font-variant-numeric: tabular-nums; }
+    .timer.visible { display: block; }
+
+    .processing { display: none; margin-top: 2rem; font-size: 0.9rem; color: #888; text-align: center; }
+    .processing.visible { display: block; }
+    .dot-animation::after { content: ''; animation: dots 1.4s infinite; }
+    @keyframes dots {
+      0%  { content: '.'; }  33% { content: '..'; }
+      66% { content: '...'; } 100% { content: ''; }
+    }
+
+    .transcript-box {
+      display: none; margin-top: 2.5rem; width: 100%; max-width: 480px;
+      background: #1a1a1a; border: 1px solid #2a2a2a;
+      border-radius: 16px; padding: 1.25rem;
+    }
+    .transcript-box.visible { display: block; }
+    .transcript-box h2 { font-size: 0.75rem; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.75rem; }
+    .transcript-text { font-size: 0.95rem; line-height: 1.65; color: #ddd; }
+  </style>
+</head>
+<body>
+
+  <h1>AI Ring MVP</h1>
+  <p class="subtitle">Tap to record your conversation</p>
+
+  <button class="record-btn idle" id="recordBtn" onclick="toggleRecording()">
+    <span class="btn-icon" id="btnIcon">🎙️</span>
+    <span id="btnLabel">Tap to Record</span>
+  </button>
+
+  <p class="status" id="status">Ready</p>
+  <p class="timer"  id="timer">0:00</p>
+
+  <p class="processing" id="processing">
+    <span class="dot-animation">Transcribing your conversation</span>
+  </p>
+
+  <div class="transcript-box" id="transcriptBox">
+    <h2>Transcript</h2>
+    <p class="transcript-text" id="transcriptText"></p>
+  </div>
+
+  <script>
+    const DEEPGRAM_KEY = "d517d4cf9ee6588196db112011589b0806dfcf0a";
+
+    let mediaRecorder = null;
+    let audioChunks   = [];
+    let isRecording   = false;
+    let timerInterval = null;
+    let secondsElapsed = 0;
+
+    async function toggleRecording() {
+      isRecording ? stopRecording() : await startRecording();
+    }
+
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder  = new MediaRecorder(stream);
+        audioChunks    = [];
+
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+        mediaRecorder.onstop = async () => {
+          const blob = new Blob(audioChunks, { type: "audio/webm" });
+          stream.getTracks().forEach(t => t.stop());
+          await transcribeAudio(blob);
+        };
+
+        mediaRecorder.start();
+        isRecording    = true;
+        secondsElapsed = 0;
+
+        document.getElementById("recordBtn").className  = "record-btn recording";
+        document.getElementById("btnIcon").textContent  = "⏹️";
+        document.getElementById("btnLabel").textContent = "Tap to Stop";
+        document.getElementById("status").textContent   = "Recording…";
+        document.getElementById("status").className     = "status active";
+        document.getElementById("timer").className      = "timer visible";
+        document.getElementById("transcriptBox").className = "transcript-box";
+
+        timerInterval = setInterval(() => {
+          secondsElapsed++;
+          const m = Math.floor(secondsElapsed / 60);
+          const s = secondsElapsed % 60;
+          document.getElementById("timer").textContent = m + ":" + String(s).padStart(2,"0");
+        }, 1000);
+
+      } catch (err) {
+        document.getElementById("status").textContent =
+          "Microphone access denied — please allow microphone in Safari settings.";
+      }
+    }
+
+    function stopRecording() {
+      if (!mediaRecorder || !isRecording) return;
+      mediaRecorder.stop();
+      isRecording = false;
+      clearInterval(timerInterval);
+
+      document.getElementById("recordBtn").className  = "record-btn idle";
+      document.getElementById("btnIcon").textContent  = "🎙️";
+      document.getElementById("btnLabel").textContent = "Tap to Record";
+      document.getElementById("status").textContent   = "Recording saved";
+      document.getElementById("status").className     = "status saved";
+      document.getElementById("timer").className      = "timer";
+      document.getElementById("processing").className = "processing visible";
+    }
+
+    async function transcribeAudio(audioBlob) {
+      try {
+        const res = await fetch(
+          "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&punctuate=true",
+          {
+            method:  "POST",
+            headers: {
+              "Authorization": "Token " + DEEPGRAM_KEY,
+              "Content-Type":  "audio/webm"
+            },
+            body: audioBlob
+          }
+        );
+        const data       = await res.json();
+        const transcript = data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
+
+        document.getElementById("processing").className = "processing";
+
+        if (transcript.trim()) {
+          document.getElementById("transcriptText").textContent  = transcript;
+          document.getElementById("transcriptBox").className     = "transcript-box visible";
+          document.getElementById("status").textContent          = "Transcript ready ✓";
+        } else {
+          document.getElementById("status").textContent = "No speech detected — try again";
+        }
+
+      } catch (err) {
+        document.getElementById("processing").className = "processing";
+        document.getElementById("status").textContent   = "Transcription error — check your Deepgram key";
+      }
+    }
+  </script>
+
+</body>
+</html>
